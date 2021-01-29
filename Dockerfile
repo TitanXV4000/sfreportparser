@@ -6,4 +6,4 @@ WORKDIR /usr/src/apps/sfreportparser
 RUN npm install
 # If you are building your code for production
 # RUN npm ci --only=production
-CMD [ "node", "server.js" ]
+CMD [ "node", "index.js" ]
