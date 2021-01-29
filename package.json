@@ -1,0 +1,18 @@
+{
+  "name": "sfreportparser",
+  "version": "0.0.1",
+  "description": "Parse Salesforce csv reports and save to mongo",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "jwalker",
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^3.5.1",
+    "csv": "^5.3.2",
+    "dateformat": "^4.5.0",
+    "mongodb": "^3.6.3",
+    "winston": "^3.3.3"
+  }
+}
