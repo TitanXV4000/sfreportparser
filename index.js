@@ -222,7 +222,7 @@ async function uploadToMongo(sfCases) {
 
       /* Initiate the Puppeteer browser */
       const browser = await puppeteer.launch({
-        headless: false,
+        // headless: false,
         // slowMo: 250,
         // defaultViewport: null,
         args: ['--no-sandbox'],
