@@ -249,11 +249,11 @@ async function uploadToMongo(sfCases) {
         }
         const newFields = await updateFields(page, _case.urlPrintView);
         logger.debug("newFields: " + JSON.stringify(newFields));
-        if (!newFields[0]) { throw new Error("newFields empty. Skipping mongo update."); }
-        _case.caseOwner = newFields[0];
-        _case.caseOwnerAlias = newFields[0];
-        _case.product = newFields[1];
-        _case.subject = newFields[2];
+        if (!newFields.owner) { throw new Error("newFields empty. Skipping mongo update."); }
+        _case.caseOwner = newFields.owner;
+        _case.caseOwnerAlias = newFields.owner;
+        _case.product = newFields.product;
+        _case.subject = newFields.subject;
       }
       // TODO enclose puppeteer in its own try/catch so that the browser is always closed
       await browser.close();
@@ -284,11 +284,10 @@ async function updateFields(page, url) {
   logger.debug("page.goto: " + url);
 
   // Evaluate 
-  const newFields = await page.evaluate(() => {
+  return await page.evaluate(() => {
     const owner = document.querySelector(
       "#mainTable > div.pbBody > div:nth-child(15) > table > tbody > tr:nth-child(4) > td.dataCol.last.col02"
     ).innerText;
-
 
     const product = document.querySelector(
       "#mainTable > div.pbBody > div:nth-child(7) > table > tbody > tr:nth-child(1) > td:nth-child(4)"
@@ -299,12 +298,7 @@ async function updateFields(page, url) {
     ).innerText;
 
     return { owner, product, subject }
-    
   });
-
-  logger.debug("In function 'updateFields' value of 'newFields': " + JSON.stringify(newFields) + ".");
-
-  return newFields;
 }
 
 

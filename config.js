@@ -1,7 +1,7 @@
 exports.MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/?poolSize=20&writeConcern=majorityw';
 exports.MONGO_DB = process.env.MONGO_DB || 'sfwb';
 exports.DOWNLOAD_PATH = process.env.DOWNLOAD_PATH || '/sfexports';
-exports.SF_LOGIN_URL = process.env.SF_LOGIN_URL || 'https://microfocus.lightning.force.com/lightning/o/Case/list?filterName=00B4J000006KF7QUAW'
+exports.SF_LOGIN_URL = process.env.SF_LOGIN_URL || 'https://microfocus.my.salesforce.com/5004J00000MC9o9QAD/p'
 exports.USER_LOGIN = process.env.USER_LOGIN || '';
 exports.PASS = process.env.PASS || '';
 exports.NODE_ENV = process.env.NODE_ENV || 'dev';
@@ -9,4 +9,4 @@ exports.LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 exports.EMAIL_FROM = process.env.EMAIL_FROM || '';
 exports.EMAIL_FROM_PASS = process.env.EMAIL_FROM_PASS || '';
 exports.EMAIL_TO = process.env.EMAIL_TO || '';
-exports.LOGIN_TIMEOUT = process.env.LOGIN_TIMEOUT || '40000';
+exports.LOGIN_TIMEOUT = process.env.LOGIN_TIMEOUT || '30000';
