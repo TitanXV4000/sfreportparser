@@ -247,15 +247,15 @@ async function uploadToMongo(sfCases) {
           _case.urlPrintView = urlPrintView = `https://microfocus.my.salesforce.com/${_case.caseID}/p`;
           logger.debug("Added urlPrintView: " + _case.urlPrintView);
         }
-        let newFields = await updateFields(page, _case.urlPrintView);
+        const newFields = await updateFields(page, _case.urlPrintView);
         logger.debug("newFields: " + JSON.stringify(newFields));
-        if (!newFields[0]) { throw new Error("newFields empty. Skipping mongo updatae."); }
+        if (!newFields[0]) { throw new Error("newFields empty. Skipping mongo update."); }
         _case.caseOwner = newFields[0];
         _case.caseOwnerAlias = newFields[0];
         _case.product = newFields[1];
         _case.subject = newFields[2];
       }
-
+      // TODO enclose puppeteer in its own try/catch so that the browser is always closed
       await browser.close();
       logger.debug("Finished querying new owners. Browser closed.");
     }
@@ -284,23 +284,25 @@ async function updateFields(page, url) {
   logger.debug("page.goto: " + url);
 
   // Evaluate 
-  let newFields = await page.evaluate(() => {
-    let owner = document.querySelector(
+  const newFields = await page.evaluate(() => {
+    const owner = document.querySelector(
       "#mainTable > div.pbBody > div:nth-child(15) > table > tbody > tr:nth-child(4) > td.dataCol.last.col02"
     ).innerText;
 
 
-    let product = document.querySelector(
+    const product = document.querySelector(
       "#mainTable > div.pbBody > div:nth-child(7) > table > tbody > tr:nth-child(1) > td:nth-child(4)"
     ).innerText;
 
-    let subject = document.querySelector(
+    const subject = document.querySelector(
       "#mainTable > div.pbBody > div:nth-child(3) > table > tbody > tr:nth-child(5) > td.dataCol.col02"
     ).innerText;
 
     return { owner, product, subject }
     
   });
+
+  logger.debug("In function 'updateFields' value of 'newFields': " + JSON.stringify(newFields) + ".");
 
   return newFields;
 }
