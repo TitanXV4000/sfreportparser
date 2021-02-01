@@ -249,6 +249,7 @@ async function uploadToMongo(sfCases) {
         }
         let newFields = await updateFields(page, _case.urlPrintView);
         logger.debug("newFields: " + JSON.stringify(newFields));
+        if (!newFields[0]) { throw new Error("newFields empty. Skipping mongo updatae."); }
         _case.caseOwner = newFields[0];
         _case.caseOwnerAlias = newFields[0];
         _case.product = newFields[1];
