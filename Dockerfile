@@ -1,5 +1,7 @@
-FROM node:14
+FROM buildkite/puppeteer:5.2.1
 WORKDIR /usr/src/apps
+RUN apt-get update
+RUN apt-get -y install git
 RUN mkdir /sfexports
 RUN git clone https://github.com/johndwalker/sfreportparser.git
 WORKDIR /usr/src/apps/sfreportparser

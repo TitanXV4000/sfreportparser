@@ -5,6 +5,7 @@ jwalker
 */
 const config = require('./config');
 const { MongoClient } = require('mongodb');
+const puppeteer = require('puppeteer');
 const dateFormat = require("dateformat");
 const fs = require('fs');
 const fsPromises = fs.promises;
@@ -13,6 +14,16 @@ const parse = require("csv-parse/lib/sync");
 const winston = require('winston');
 const { createLogger, format, transports } = require('winston');
 const { combine, timestamp, label, printf } = format;
+var nodemailer = require('nodemailer');
+
+// TODO integrate with config.js / env variables
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: config.EMAIL_FROM,
+    pass: config.EMAIL_FROM_PASS
+  }
+});
 
 const myFormat = printf(({ level, message, label, timestamp }) => {
   return `${timestamp} [${label}] ${level}: ${message}`;
@@ -46,6 +57,8 @@ if (process.env.NODE_ENV !== 'production') {
   }));
 }
 
+var processingCSV = false;
+
 var watcher = chokidar.watch(config.DOWNLOAD_PATH, {ignored: /\.crdownload/g, persistent: true});
 watcher
   .on('add', async function(path) {
@@ -61,6 +74,14 @@ watcher
     if (filesAdded < numFiles) { 
       return;
     } else {
+      /* Exit function immediately if the previous csv file is still being processed. Occurs if many 
+       ownership changes are queued */
+      if (processingCSV) {
+        logger.debug("Skipping csv processing as previous file has not been parsed.");
+        return;
+      }
+      processingCSV = true;
+
       /* Initialization complete. Time to parse... */
       logger.info("Reading file " + path + ".");
       var latestReport = await readFile(path);
@@ -78,7 +99,8 @@ watcher
       var sfCases = [];
       for (const row of data) {
         values = Object.values(row);
-        url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`;
+        url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`
+        urlPrintView = `https://microfocus.my.salesforce.com/${values[1]}/p`;
         sfCases.unshift({
           "logTime"          : timestamp,
           "_id"              : values[0], // case number - primary identifier in mongo
@@ -110,14 +132,17 @@ watcher
           "description"      : values[26],
           "caseComments"     : values[27],
           "url"              : url,
+          "urlPrintView"     : urlPrintView,
         });
       }
-      logger.debug("Created case objects: " + sfCases);
+      logger.verbose("Created case objects: " + sfCases);
 
       logger.info("Sending cases to mongo.");
       await uploadToMongo(sfCases);
 
       lastUpdateTime = new Date();
+
+      processingCSV = false;
     }    
   })
   .on('change', function(path) { logger.debug('File ' + path + ' has been changed.'); })
@@ -192,6 +217,48 @@ async function uploadToMongo(sfCases) {
       }
     });
 
+    if (moveQueue.length > 0) {
+      logger.debug("moveQueue contains objects.");
+
+      /* Initiate the Puppeteer browser */
+      const browser = await puppeteer.launch({
+        headless: false,
+        // slowMo: 250,
+        // defaultViewport: null,
+        args: ['--no-sandbox'],
+      });
+
+      const context = browser.defaultBrowserContext();
+      context.overridePermissions(url, ["notifications"]);
+    
+      logger.debug("Browser loaded.");
+
+      const page = await salesforceLogin(browser, config.SF_LOGIN_URL);
+
+      for (var _case of moveQueue) {
+        if (!_case) {
+          logger.error("null entry found in moveQueue. Skipping...");
+          break;
+        }
+        logger.verbose("_case: " + JSON.stringify(_case));
+        logger.debug("Looping through cases in moveQueue - querying for new owner for case " + _case._id + ".");
+        /* spaghetti to account for older cases that don't have the newer urlPrintView attribute */
+        if (!_case.urlPrintView) {
+          _case.urlPrintView = urlPrintView = `https://microfocus.my.salesforce.com/${_case.caseID}/p`;
+          logger.debug("Added urlPrintView: " + _case.urlPrintView);
+        }
+        let newFields = await updateFields(page, _case.urlPrintView);
+        logger.debug("newFields: " + JSON.stringify(newFields));
+        _case.caseOwner = newFields[0];
+        _case.caseOwnerAlias = newFields[0];
+        _case.product = newFields[1];
+        _case.subject = newFields[2];
+      }
+
+      await browser.close();
+      logger.debug("Finished querying new owners. Browser closed.");
+    }
+
     await deleteDocuments(moveQueue, unassignedCollection);
     await insertDocuments(moveQueue, assignedCollection);
 
@@ -206,6 +273,69 @@ async function uploadToMongo(sfCases) {
   }
 }
 
+
+/* "Query" Salesforce for new owner, subject, and product. 
+   Requires authenticated page and _case.urlPrintView as argument. */
+async function updateFields(page, url) {
+  logger.debug("Updating fields for [" + url + "].");
+
+  await page.goto(url, { waitUntil: 'networkidle2' });
+  logger.debug("page.goto: " + url);
+
+  // Evaluate 
+  let newFields = await page.evaluate(() => {
+    let owner = document.querySelector(
+      "#mainTable > div.pbBody > div:nth-child(15) > table > tbody > tr:nth-child(4) > td.dataCol.last.col02"
+    ).innerText;
+
+
+    let product = document.querySelector(
+      "#mainTable > div.pbBody > div:nth-child(7) > table > tbody > tr:nth-child(1) > td:nth-child(4)"
+    ).innerText;
+
+    let subject = document.querySelector(
+      "#mainTable > div.pbBody > div:nth-child(3) > table > tbody > tr:nth-child(5) > td.dataCol.col02"
+    ).innerText;
+
+    return { owner, product, subject }
+    
+  });
+
+  return newFields;
+}
+
+
+/* Logs into salesforce and returns the page */
+async function salesforceLogin(browser, url) {
+  const page = await browser.newPage();
+  logger.debug("Blank page loaded.");
+
+  /* Go to the page and wait for it to load */
+  await page.goto(url, { waitUntil: 'networkidle2' });
+  logger.debug("Salesforce initial auth page loaded.");
+
+  /* Click on the SSO button */
+  await Promise.all([
+    page.click('#idp_section_buttons > button > span'),
+    waitForNetworkIdle(page, 2000, 0),
+    logger.debug("Navigating to SSO page."),
+  ]);
+
+  /* Enter username/password */
+  await Promise.all([
+    await page.type('#username', config.USER_LOGIN),
+    await page.type('#password', config.PASS),
+    await page.keyboard.press('Enter'),
+    logger.info("Logged in to Salesforce. Please wait..."),
+    await sleep(25000),
+    waitForNetworkIdle(page, 1000, 0),
+    logger.debug("Salesforce case page loaded."),
+  ]);
+
+  return page;
+}
+
+
 /* Sends an error if no new files have been detected in at least 2 minutes */
 async function checkLastUpdateTime() {
   let finished = false;
@@ -215,7 +345,24 @@ async function checkLastUpdateTime() {
     let diff = currentTime - lastUpdateTime;
 
     if (diff > 120000) { // two minutes
-      logger.error("Error: it has been " + Math.floor(diff / 1000 / 60) + " minutes since receiving any updates.\nYou may need to check on the sfexporter.");
+      let errorMessage = "Error: it has been " + Math.floor(diff / 1000 / 60) + " minutes since receiving any updates.\nYou may need to check on the sfexporter.";
+      logger.error(errorMessage);
+
+      const mailOptions = {
+        from: config.EMAIL_FROM,
+        to: config.EMAIL_TO,
+        subject: 'Alert - [sfreportparser] error',
+        text: errorMessage
+      };
+
+      transporter.sendMail(mailOptions, function(error, info){
+        if (error) {
+          console.log(error);
+        } else {
+          console.log('Email sent: ' + info.response);
+        }
+      });
+      
     } else {
       logger.debug("Last update was received " + Math.floor(diff / 1000) + " seconds ago.");
     }
@@ -277,3 +424,45 @@ function sleep(ms) {
   });
 } 
 
+
+/* Use if 500ms timeout of 'networkidleX' is insufficient */
+function waitForNetworkIdle(page, timeout, maxInflightRequests = 0) {
+  page.on('request', onRequestStarted);
+  page.on('requestfinished', onRequestFinished);
+  page.on('requestfailed', onRequestFinished);
+
+  let inflight = 0;
+  let fulfill;
+  let promise = new Promise(x => fulfill = x);
+  let timeoutId = setTimeout(onTimeoutDone, timeout);
+  return promise;
+
+  function onTimeoutDone() {
+    page.removeListener('request', onRequestStarted);
+    page.removeListener('requestfinished', onRequestFinished);
+    page.removeListener('requestfailed', onRequestFinished);
+    fulfill();
+  }
+
+  function onRequestStarted() {
+    ++inflight;
+    if (inflight > maxInflightRequests)
+      clearTimeout(timeoutId);
+  }
+  
+  function onRequestFinished() {
+    if (inflight === 0)
+      return;
+    --inflight;
+    if (inflight === maxInflightRequests)
+      timeoutId = setTimeout(onTimeoutDone, timeout);
+  }
+}
+
+
+/* They promised me this would not be needed... */
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+} 
