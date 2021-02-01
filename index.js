@@ -326,8 +326,8 @@ async function salesforceLogin(browser, url) {
     await page.type('#username', config.USER_LOGIN),
     await page.type('#password', config.PASS),
     await page.keyboard.press('Enter'),
-    logger.info("Logged in to Salesforce. Please wait..."),
-    await sleep(25000),
+    logger.info("Logged in to Salesforce. Please wait " + config.LOGIN_TIMEOUT / 1000 + " seconds..."),
+    await sleep(config.LOGIN_TIMEOUT),
     waitForNetworkIdle(page, 1000, 0),
     logger.debug("Salesforce case page loaded."),
   ]);
