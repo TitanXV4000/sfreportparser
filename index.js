@@ -6,7 +6,6 @@ jwalker
 const config = require('./config');
 const { MongoClient } = require('mongodb');
 const puppeteer = require('puppeteer');
-const dateFormat = require("dateformat");
 const fs = require('fs');
 const fsPromises = fs.promises;
 const chokidar = require('chokidar');
@@ -93,8 +92,10 @@ watcher
 
       logger.debug("Loaded the following data from file: " + JSON.stringify(data));
 
-      var now = new Date();
-      var timestamp = dateFormat(now, "shortDate") + " " + dateFormat(now, "mediumTime");
+      var timestamp = new Date()
+        .toLocaleString('en-US', { timeZone: 'America/Denver'})
+        .replace(',', '');
+      logger.debug("logTime timestamp: " + timestamp);
 
       var sfCases = [];
       for (const row of data) {
