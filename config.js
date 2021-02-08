@@ -9,6 +9,6 @@ exports.LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 exports.EMAIL_FROM = process.env.EMAIL_FROM || '';
 exports.EMAIL_FROM_PASS = process.env.EMAIL_FROM_PASS || '';
 exports.EMAIL_TO = process.env.EMAIL_TO || '';
-exports.LOGIN_TIMEOUT = process.env.LOGIN_TIMEOUT || '30000';
+exports.LOGIN_TIMEOUT = process.env.LOGIN_TIMEOUT || '22000';
 exports.SERVICE_NAME = process.env.SERVICE_NAME || 'sfreportparser';
 exports.TIMEZONE = process.env.TIMEZONE || 'America/Denver';

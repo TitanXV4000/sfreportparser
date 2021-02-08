@@ -169,7 +169,7 @@ async function uploadToMongo(sfCases) {
     logger.info("Mongo updated successfully.");
 
   } catch (e) {
-    logger.error(e);
+    logger.error(e.toLocaleString());
   } finally {
     // Ensures that the client will close when you finish/error
     await client.close();
@@ -255,7 +255,7 @@ async function updateAssigned(mfiSupportCases) {
 
       for (const value of mfiSupportCases) {
         if (value._id === i._id) {
-          logger.debug("Case " + i._id + " is still in the queue. Skipping...");
+          logger.silly("Case " + i._id + " is still in the queue. Skipping...");
           exists = true;
         }
       }
@@ -274,9 +274,11 @@ async function updateAssigned(mfiSupportCases) {
       await upsertToCollection(allOpenCollection, moveQueue);
 
       logger.info("Mongo updated successfully.");
+    } else {
+      logger.debug("No cases need to be updated at this time.");
     }
   } catch (e) {
-    logger.error(e.toLocaleString);
+    logger.error(e.toLocaleString());
   } finally {
     client.close();
     logger.debug("Mongo connection closed.");
@@ -381,29 +383,30 @@ async function evaluatePage(page, url) {
 async function upsertToCollection(collection, docs) {
   /* Insert new records */
   logger.debug(`Upserting documents to ${collection.collectionName}.`);
-  for (const value of docs) {
+
+  const bulkOps = [];
+
+  for (const doc of docs) {
     /* Query for the document */
-    const query = { _id: value._id };
+    const filter = { _id: doc._id };
     const options = { upsert: true, }; // updates if exists, inserts if not
 
-    const result = await collection.replaceOne(query, value, options);
-
-    if (result.modifiedCount === 0 && result.upsertedCount === 0) {
-      logger.debug("No changes made to the collection.");
-    } else {
-      if (result.matchedCount === 1) {
-        logger.debug("Matched " + result.matchedCount + " document.");
+    bulkOps.push(
+      { replaceOne :
+        {
+          "filter"      : filter,
+          "replacement" : doc,
+          "upsert"      : true
+        }
       }
-      if (result.modifiedCount === 1) {
-        logger.debug("Updated one document.");
-      }
-      if (result.upsertedCount === 1) {
-        logger.debug(
-          "Inserted one new document with an _id of " + result.upsertedId._id
-        );
-      }
-    }
+    );
   }
+
+  const result = await collection.bulkWrite(bulkOps);
+
+  logger.debug(`Matched ${result.nMatched} documents.`);
+  logger.debug(`Updated ${result.nModified} documents.`);
+  logger.debug(`Updated ${result.nUpserted} documents.`);
 }
 
 
@@ -460,7 +463,7 @@ async function listDir(path) {
   try {
     return fsPromises.readdir(path);
   } catch (e) {
-    logger.error('Error occured while reading directory!', e);
+    logger.error('Error occured while reading directory!', e.toLocaleString());
   }
 }
 
@@ -470,7 +473,7 @@ async function readFile(path) {
   try {
     return fs.readFileSync(path);
   } catch (e) {
-    logger.error("Error caught in readFile: " + e);
+    logger.error("Error caught in readFile: " + e.toLocaleString());
   }
 }
 
