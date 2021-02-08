@@ -7,14 +7,13 @@ const config = require('./config');
 const { MongoClient } = require('mongodb');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
-const fsPromises = fs.promises;
 const chokidar = require('chokidar');
 const parse = require('csv-parse/lib/sync');
 const jwalkerLogger = require('jwalker-logger');
 const nodemailer = require('nodemailer');
 const sf = require('./jwalker-sf');
-var emitter = require('events').EventEmitter;
-const { ucs2 } = require('punycode');
+const emitter = require('events').EventEmitter;
+const path = require('path');
 
 // TODO integrate with config.js / env variables
 const transporter = nodemailer.createTransport({
@@ -25,13 +24,13 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-const MONGO_ALL_OPEN_COLLECTION = 'open';
+const MONGO_OPEN_COLLECTION = 'open';
 const MONGO_UNASSIGNED_COLLECTION = 'unassigned';
 
-var filesAdded = 0;
 var lastUpdateTime;
 
 const logger = jwalkerLogger.newLogger();
+logger.info("Starting up.");
 
 var processingCSV = false;
 
@@ -39,19 +38,30 @@ var casesUpdatedEmitter = new emitter();
 
 var initialized = false;
 
+
 casesUpdatedEmitter
-  .on('openUpdated', async function() {
-    logger.debug("Received 'openUpdated' event from casesUpdatedEmitter.");
+  .on('open updated', async function() {
+    logger.debug("Received 'open updated' event from casesUpdatedEmitter.");
     await updateUnassigned();
   })
-  .on('unassignedUpdated', async function(mfiSupportCases) {
-    logger.debug("Received 'unassignedUpdated' event from casesUpdatedEmitter.");
+  .on('closed updated', async function(closedCases) {
+    logger.debug("Received 'closed updated' event from casesUpdatedEmitter.");
+    await cleanupClosedCases(closedCases);
+  })
+  .on('unassigned updated', async function(mfiSupportCases) {
+    logger.debug("Received 'unassigned updated' event from casesUpdatedEmitter.");
     await updateAssigned(mfiSupportCases);
   })
-  .on('csvParsed', async function(filename) {
-    logger.debug("Received 'csvParsed' event from casesUpdatedEmitter.");
+  .on('csv parsed', async function(filename) {
+    logger.debug("Received 'csv parsed' event from casesUpdatedEmitter.");
+    processingCSV = false;
     await deleteFile(filename);
-  });
+  })
+  .on('cases parsed', async function(collection, cases) {
+    logger.debug("Received 'cases parsed' event from casesUpdatedEmitter.");
+    await uploadToMongo(collection, cases);
+  })
+
 
 var watcher = chokidar.watch(config.DOWNLOAD_PATH, 
   {
@@ -60,46 +70,49 @@ var watcher = chokidar.watch(config.DOWNLOAD_PATH,
     persistent: true,
     depth: 0
   });
-
 watcher
   .on('ready', () => {
-    logger.info('Initial scan complete. Ready for changes.');
+    logger.info('Initial scan complete. Ready to process new reports.');
     initialized = true;
   })
-  .on('change', function(path) { logger.debug('File ' + path + ' has been changed.');   })
-  .on('unlink', function(path) { logger.debug('File ' + path + ' has been removed.');   })
-  .on('error' , function(e)    { logger.error(e.toLocaleString());                      })
-  .on('add'   , async function(path) {
+  .on('change', function(filePath) { logger.debug('File ' + filePath + ' has been changed.'); })
+  .on('unlink', function(filePath) { logger.debug('File ' + filePath + ' has been removed.'); })
+  .on('error', function(e) { logger.error(e.toLocaleString()); })
+  .on('add', async function(filePath) {
     /* Exit function immediately if not initialized or the previous csv file 
        is still being processed. */
-    if (!initialized || processingCSV) return;
-
-    processingCSV = true;
+    if (!initialized/* || processingCSV*/) return;
 
     /* Initialization complete. Time to parse... */
-    logger.info("Reading file " + path + ".");
-    var latestReport = await readFile(path);
+    processingCSV = true;
+
+    /* Get the report tag from the beginnning of the basename to determine collection */
+    const collectionName = ((path.basename(filePath)).split('_'))[0];
+    logger.debug(`collectionName from reportTag: ${collectionName}`);
+    
+    logger.info(`Detected new file \'${filePath}\'. Begin parsing...`);
+    var latestReport = await readFile(filePath);
 
     var data = await parse(latestReport, {
       columns: true,
       skip_empty_lines: true
     });
 
-    // logger.silly("Loaded the following data from file: " + JSON.stringify(data));
+    logger.silly("Loaded the following data from file: " + JSON.stringify(data));
 
     var timestamp = new Date()
       .toLocaleString('en-US', { timeZone: 'America/Denver'})
       .replace(',', '');
     logger.debug("logTime timestamp: " + timestamp);
 
-    var sfCases = [];
+    var cases = [];
     for (const row of data) {
       values = Object.values(row);
       url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`
       urlPrintView = `https://microfocus.my.salesforce.com/${values[1]}/p`;
-      sfCases.unshift({
+      cases.unshift({
         "logTime"          : timestamp,
-        "_id"              : values[0], // case number - primary identifier in mongo
+        "_id"              : values[0], // case number - primary identifier in mongo (indexed automatically)
         "caseID"           : values[1],
         "caseOwner"        : values[2],
         "caseOwnerAlias"   : values[3],
@@ -129,47 +142,49 @@ watcher
         "caseComments"     : values[27],
         "FTSAccountName"   : values[28],
         "FTSPassword"      : values[29],
+        "dateTimeClosed"   : values[30],
+        "closureSummary"   : values[31],
+        "closeCode"        : values[32],
         "url"              : url,
         "urlPrintView"     : urlPrintView,
       });
     }
-    // logger.silly("Created case objects: " + sfCases);
+    logger.silly("Created case objects: " + cases);
 
-    logger.info("Sending cases to mongo.");
-    await uploadToMongo(sfCases);
+    casesUpdatedEmitter.emit(`cases parsed`, collectionName, cases);
 
     lastUpdateTime = new Date();
 
-    processingCSV = false;
-    casesUpdatedEmitter.emit('csvParsed', path);
+    casesUpdatedEmitter.emit('csv parsed', filePath);
   });
 
 
 /* Accepts list of case objects to upload to mongo */
-async function uploadToMongo(sfCases) {
+async function uploadToMongo(collectionName, cases) {
+  logger.info(`Sending cases to mongo collection \'${collectionName}\'.`);
   /* Connect to MongoDB */
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
 
   try {
     // Connect the client to the server
-    logger.info("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
+    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
     await client.connect();
     // Establish and verify connection
     const database = client.db(config.MONGO_DB);
     await database.command({ ping: 1 });
     logger.debug("Connected successfully to mongo server.");
 
-    database.createCollection(MONGO_ALL_OPEN_COLLECTION, function (e) {
-      if (e) logger.error(e.toLocaleString());
+    database.createCollection(collectionName, function (e) {
+      if (e) logger.debug(e.toLocaleString());
     });
 
-    const allOpenCollection = database.collection(MONGO_ALL_OPEN_COLLECTION);
+    const collection = database.collection(collectionName);
 
-    await upsertToCollection(allOpenCollection, sfCases);
+    await upsertToCollection(collection, cases);
 
-    casesUpdatedEmitter.emit('openUpdated');
+    casesUpdatedEmitter.emit(`${collectionName} updated`, cases);
 
-    logger.info("Mongo updated successfully.");
+    logger.debug("Mongo updated successfully.");
 
   } catch (e) {
     logger.error(e.toLocaleString());
@@ -181,15 +196,77 @@ async function uploadToMongo(sfCases) {
 }
 
 
+/* Uses bulkWrite to quickly upsert documents to the specified collection 
+   Requires mongodb collection and array of documents */
+async function upsertToCollection(collection, docs) {
+  /* Insert new records */
+  logger.debug(`Upserting documents to ${collection.collectionName}.`);
+
+  const bulkOps = [];
+
+  for (const doc of docs) {
+    /* Query for the document */
+    const filter = { _id: doc._id };
+
+    bulkOps.push(
+      { replaceOne :
+        {
+          "filter"      : filter,
+          "replacement" : doc,
+          "upsert"      : true
+        }
+      }
+    );
+  }
+
+  const result = await collection.bulkWrite(bulkOps);
+
+  //logger.info(`Matched ${result.nMatched} documents.`);
+  logger.info(`Updated ${result.nModified} documents.`);
+  logger.info(`Upserted ${result.nUpserted} documents.`);
+}
+
+
+/* Deletes objects from a collection. Takes an array of objects and a collection */
+async function deleteDocuments(collection, docs) {
+  try {
+    logger.debug(`Deleting documents from collection \'${collection.collectionName}\'`);
+
+    const bulkOps = [];
+
+    for (const doc of docs) {
+      /* Query for the document */
+      const filter = { _id: doc._id };
+      const options = { upsert: true, }; // updates if exists, inserts if not
+
+      bulkOps.push(
+        { deleteOne :
+          {
+            "filter" : filter
+          }
+        }
+      );
+    }
+
+    const result = await collection.bulkWrite(bulkOps);
+
+    logger.info(`Deleted ${result.nRemoved} documents.`);
+
+  } catch (e) {
+    logger.error(`Caught error in deleteDocuments: ${e.toLocaleString()}`);
+  }
+}
+
+
 /* Query for all open cases with owner 'MFI Support' and add to unassigned collection */
 async function updateUnassigned() {
-  logger.debug("Updating unassigned collection.");
+  logger.info("Updating unassigned collection (frontline).");
 
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
 
   try {
     // Connect the client to the server
-    logger.info("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
+    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
     await client.connect();
     // Establish and verify connection
     const database = client.db(config.MONGO_DB);
@@ -197,17 +274,17 @@ async function updateUnassigned() {
     logger.debug("Connected successfully to mongo server.");
 
     database.createCollection(MONGO_UNASSIGNED_COLLECTION, function (e) {
-      if (e) logger.error(e.toLocaleString());
+      if (e) logger.debug(e.toLocaleString());
     });
 
-    const allOpenCollection = database.collection(MONGO_ALL_OPEN_COLLECTION);
+    const openCollection = database.collection(MONGO_OPEN_COLLECTION);
     const unassignedCollection = database.collection(MONGO_UNASSIGNED_COLLECTION);
 
     const query = { caseOwner: "MFI Support" };
 
     const options = { sort: { dateTimeOpened: 1 } };
 
-    const mfiSupportCases = allOpenCollection.find(query, options);
+    const mfiSupportCases = openCollection.find(query, options);
 
     logger.debug(`Found ${await mfiSupportCases.count()} cases.`);
 
@@ -218,7 +295,7 @@ async function updateUnassigned() {
     const mfiSupportCasesArray = await mfiSupportCases.toArray();
     await upsertToCollection(unassignedCollection, mfiSupportCasesArray);
 
-    casesUpdatedEmitter.emit('unassignedUpdated', mfiSupportCasesArray);
+    casesUpdatedEmitter.emit('unassigned updated', mfiSupportCasesArray);
 
   } catch (e) {
     logger.error(e.toLocaleString());
@@ -229,22 +306,23 @@ async function updateUnassigned() {
 }
 
 
-/* Compare new MFI Support cases against previous records and update fields for newly-assigned cases */
+/* Compare new MFI Support cases against previous records and update fields for newly-assigned cases 
+   TODO this function is redundant now that all open cases are constantly updated */
 async function updateAssigned(mfiSupportCases) {
-  logger.debug("Updating assigned cases.");
+  logger.info("Updating fields of assigned cases.");
   /* Connect to MongoDB */
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
 
   try {
     // Connect the client to the server
-    logger.info("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
+    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
     await client.connect();
     // Establish and verify connection
     const database = client.db(config.MONGO_DB);
     await database.command({ ping: 1 });
     logger.debug("Connected successfully to mongo server.");
 
-    const allOpenCollection = database.collection(MONGO_ALL_OPEN_COLLECTION);
+    const openCollection = database.collection(MONGO_OPEN_COLLECTION);
     const unassignedCollection = database.collection(MONGO_UNASSIGNED_COLLECTION);
 
      /* Move reassigned records to 'moved' collection */
@@ -272,12 +350,12 @@ async function updateAssigned(mfiSupportCases) {
       logger.debug(`Detected ${moveQueue.length} newly-assigned cases. Preparing to update documents.`);
 
       await updateFields(moveQueue);
-      await deleteDocuments(moveQueue, unassignedCollection);
-      await upsertToCollection(allOpenCollection, moveQueue);
+      await deleteDocuments(unassignedCollection, moveQueue);
+      await upsertToCollection(openCollection, moveQueue);
 
-      logger.info("Mongo updated successfully.");
+      logger.debug("Mongo updated successfully.");
     } else {
-      logger.debug("No cases need to be updated at this time.");
+      logger.info("No cases need to be updated at this time.");
     }
   } catch (e) {
     logger.error(e.toLocaleString());
@@ -290,7 +368,7 @@ async function updateAssigned(mfiSupportCases) {
 /* "Query" Salesforce for new owner, subject, and product. 
    Requires authenticated page and _case.urlPrintView as argument. */
 async function updateFields(moveQueue) {
-  logger.verbose("In updateFields() function.");
+  logger.debug("In updateFields() function.");
   try {
     /* Initiate the Puppeteer browser */
     var browser = await puppeteer.launch({
@@ -342,6 +420,7 @@ async function updateFields(moveQueue) {
       _case.product        = newFields.product;
       _case.subject        = newFields.subject;
     }
+    logger.info('Finished updating new fields.');
   } catch (e) {
     logger.error("Throwing error from updateFields().");
     throw (e);
@@ -381,39 +460,39 @@ async function evaluatePage(page, url) {
 }
 
 
-async function upsertToCollection(collection, docs) {
-  /* Insert new records */
-  logger.debug(`Upserting documents to ${collection.collectionName}.`);
+/* Remove closed cases from 'open' collection */
+async function cleanupClosedCases(closedCases) {
+  logger.info('Cleaning up closed cases from \'open\' collection.');
 
-  const bulkOps = [];
+  /* Connect to MongoDB */
+  const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
 
-  for (const doc of docs) {
-    /* Query for the document */
-    const filter = { _id: doc._id };
-    const options = { upsert: true, }; // updates if exists, inserts if not
+  try {
+    // Connect the client to the server
+    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
+    await client.connect();
+    // Establish and verify connection
+    const database = client.db(config.MONGO_DB);
+    await database.command({ ping: 1 });
+    logger.debug("Connected successfully to mongo server.");
 
-    bulkOps.push(
-      { replaceOne :
-        {
-          "filter"      : filter,
-          "replacement" : doc,
-          "upsert"      : true
-        }
-      }
-    );
+    const openCollection = database.collection(MONGO_OPEN_COLLECTION);
+
+    await deleteDocuments(openCollection, closedCases);
+    
+  } catch (e) {
+    logger.error(e.toLocaleString());
+  } finally {
+    client.close();
+    logger.debug("Mongo connection closed.");
   }
-
-  const result = await collection.bulkWrite(bulkOps);
-
-  logger.debug(`Matched ${result.nMatched} documents.`);
-  logger.debug(`Updated ${result.nModified} documents.`);
-  logger.debug(`Upserted ${result.nUpserted} documents.`);
 }
 
 
 /* Sends an error if no new files have been detected in at least 2 minutes */
 async function checkLastUpdateTime() {
   let finished = false;
+  await sleep(120000); // wait 2 minutes before first run
   do {
     const currentTime = new Date();
 
@@ -448,17 +527,6 @@ async function checkLastUpdateTime() {
   } while (!finished);
 }
 checkLastUpdateTime();
-
-/* Deletes objects from a collection. Takes an array of objects and a collection */
-async function deleteDocuments(docs, collection) {
-  logger.debug("Deleting documents...");
-  for (const doc of docs) {
-    const result = await collection.deleteOne({ _id: doc._id });
-    logger.debug(
-      `${result.deletedCount} document was deleted from ${collection.collectionName} collection with the _id: ${doc._id}`,
-    );
-  }
-}
 
 
 async function readFile(path) {
