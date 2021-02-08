@@ -321,7 +321,7 @@ async function updateFields(moveQueue) {
         logger.error("null entry found in moveQueue. Skipping...");
         break;
       }
-      
+
       logger.silly("_case: " + (JSON.stringify(_case))._id);
       logger.debug("Looping through cases in moveQueue - querying for new owner for case " + _case._id + ".");
 
@@ -437,6 +437,8 @@ async function checkLastUpdateTime() {
           console.log('Email sent: ' + info.response);
         }
       });
+
+      process.exit(5); // exit to restart docker container
       
     } else {
       logger.debug("Last update was received " + Math.floor(diff / 1000) + " seconds ago.");
