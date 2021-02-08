@@ -37,6 +37,8 @@ var processingCSV = false;
 
 var casesUpdatedEmitter = new emitter();
 
+var initialized = false;
+
 casesUpdatedEmitter
   .on('openUpdated', async function() {
     logger.debug("Received 'openUpdated' event from casesUpdatedEmitter.");
@@ -45,101 +47,102 @@ casesUpdatedEmitter
   .on('unassignedUpdated', async function(mfiSupportCases) {
     logger.debug("Received 'unassignedUpdated' event from casesUpdatedEmitter.");
     await updateAssigned(mfiSupportCases);
+  })
+  .on('csvParsed', async function(filename) {
+    logger.debug("Received 'csvParsed' event from casesUpdatedEmitter.");
+    await deleteFile(filename);
   });
 
-var watcher = chokidar.watch(config.DOWNLOAD_PATH, {ignored: /\.crdownload/g, persistent: true});
+var watcher = chokidar.watch(config.DOWNLOAD_PATH, 
+  {
+    ignored: /\.crdownload$/g,
+    ignoreInitial: /\.csv$/g,
+    persistent: true,
+    depth: 0
+  });
+
 watcher
-  .on('add', async function(path) {
-    /* On service startup watcher reads all files in the directory. The following initialization
-       code skips to the newest file in the directory, then begins parsing. */
-    logger.debug('File ' + path + ' was detected in directory ' + config.DOWNLOAD_PATH + '.');
-    
-    const numFiles = (await listDir(config.DOWNLOAD_PATH)).length;
-    logger.debug(numFiles + ' files present in directory.');
-    filesAdded++;
-    logger.debug(filesAdded + ' total files added.'); 
-
-    if (filesAdded < numFiles) { 
-      return;
-    } else {
-      /* Exit function immediately if the previous csv file is still being processed. Occurs if many 
-       ownership changes are queued */
-      if (processingCSV) {
-        logger.debug("Skipping csv processing as previous file has not been parsed.");
-        return;
-      }
-      processingCSV = true;
-
-      /* Initialization complete. Time to parse... */
-      logger.info("Reading file " + path + ".");
-      var latestReport = await readFile(path);
-
-      var data = await parse(latestReport, {
-        columns: true,
-        skip_empty_lines: true
-      })
-
-      // logger.silly("Loaded the following data from file: " + JSON.stringify(data));
-
-      var timestamp = new Date()
-        .toLocaleString('en-US', { timeZone: 'America/Denver'})
-        .replace(',', '');
-      logger.debug("logTime timestamp: " + timestamp);
-
-      var sfCases = [];
-      for (const row of data) {
-        values = Object.values(row);
-        url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`
-        urlPrintView = `https://microfocus.my.salesforce.com/${values[1]}/p`;
-        sfCases.unshift({
-          "logTime"          : timestamp,
-          "_id"              : values[0], // case number - primary identifier in mongo
-          "caseID"           : values[1],
-          "caseOwner"        : values[2],
-          "caseOwnerAlias"   : values[3],
-          "caseDate"         : values[4],
-          "subject"          : values[5],
-          "type"             : values[6],
-          "caseOrigin"       : values[7],
-          "createdBy"        : values[8],
-          "dateTimeOpened"   : values[9],
-          "ageHours"         : values[10],
-          "status"           : values[11],
-          "milestoneStatus"  : values[12],
-          "product"          : values[13],
-          "supportProduct"   : values[14],
-          "productGroup"     : values[15],
-          "severity"         : values[16],
-          "rdIncident"       : values[17],
-          "rdChangeRequest"  : values[18],
-          "contactName"      : values[19],
-          "contactEmail"     : values[20],
-          "contactPhone"     : values[21],
-          "contactRegion"    : values[22],
-          "country"          : values[23],
-          "accountName"      : values[24],
-          "businessHours"    : values[25],
-          "description"      : values[26],
-          "caseComments"     : values[27],
-          "FTSAccountName"   : values[28],
-          "FTSPassword"      : values[29],
-          "url"              : url,
-          "urlPrintView"     : urlPrintView,
-        });
-      }
-      // logger.silly("Created case objects: " + sfCases);
-
-      logger.info("Sending cases to mongo.");
-      await uploadToMongo(sfCases);
-
-      lastUpdateTime = new Date();
-
-      processingCSV = false;
-    }    
+  .on('ready', () => {
+    logger.info('Initial scan complete. Ready for changes.');
+    initialized = true;
   })
-  .on('change', function(path) { logger.debug('File ' + path + ' has been changed.'); })
-  .on('unlink', function(path) { logger.debug('File ' + path + ' has been removed.'); })
-  .on('error', function(error) { logger.error('Error happened: ' + error); })
+  .on('change', function(path) { logger.debug('File ' + path + ' has been changed.');   })
+  .on('unlink', function(path) { logger.debug('File ' + path + ' has been removed.');   })
+  .on('error' , function(e)    { logger.error(e.toLocaleString());                      })
+  .on('add'   , async function(path) {
+    /* Exit function immediately if not initialized or the previous csv file 
+       is still being processed. */
+    if (!initialized || processingCSV) return;
+
+    processingCSV = true;
+
+    /* Initialization complete. Time to parse... */
+    logger.info("Reading file " + path + ".");
+    var latestReport = await readFile(path);
+
+    var data = await parse(latestReport, {
+      columns: true,
+      skip_empty_lines: true
+    });
+
+    // logger.silly("Loaded the following data from file: " + JSON.stringify(data));
+
+    var timestamp = new Date()
+      .toLocaleString('en-US', { timeZone: 'America/Denver'})
+      .replace(',', '');
+    logger.debug("logTime timestamp: " + timestamp);
+
+    var sfCases = [];
+    for (const row of data) {
+      values = Object.values(row);
+      url = `https://microfocus.lightning.force.com/lightning/r/Case/${values[1]}/view`
+      urlPrintView = `https://microfocus.my.salesforce.com/${values[1]}/p`;
+      sfCases.unshift({
+        "logTime"          : timestamp,
+        "_id"              : values[0], // case number - primary identifier in mongo
+        "caseID"           : values[1],
+        "caseOwner"        : values[2],
+        "caseOwnerAlias"   : values[3],
+        "caseDate"         : values[4],
+        "subject"          : values[5],
+        "type"             : values[6],
+        "caseOrigin"       : values[7],
+        "createdBy"        : values[8],
+        "dateTimeOpened"   : values[9],
+        "ageHours"         : values[10],
+        "status"           : values[11],
+        "milestoneStatus"  : values[12],
+        "product"          : values[13],
+        "supportProduct"   : values[14],
+        "productGroup"     : values[15],
+        "severity"         : values[16],
+        "rdIncident"       : values[17],
+        "rdChangeRequest"  : values[18],
+        "contactName"      : values[19],
+        "contactEmail"     : values[20],
+        "contactPhone"     : values[21],
+        "contactRegion"    : values[22],
+        "country"          : values[23],
+        "accountName"      : values[24],
+        "businessHours"    : values[25],
+        "description"      : values[26],
+        "caseComments"     : values[27],
+        "FTSAccountName"   : values[28],
+        "FTSPassword"      : values[29],
+        "url"              : url,
+        "urlPrintView"     : urlPrintView,
+      });
+    }
+    // logger.silly("Created case objects: " + sfCases);
+
+    logger.info("Sending cases to mongo.");
+    await uploadToMongo(sfCases);
+
+    lastUpdateTime = new Date();
+
+    processingCSV = false;
+    casesUpdatedEmitter.emit('csvParsed', path);
+  });
 
 
 /* Accepts list of case objects to upload to mongo */
@@ -157,7 +160,7 @@ async function uploadToMongo(sfCases) {
     logger.debug("Connected successfully to mongo server.");
 
     database.createCollection(MONGO_ALL_OPEN_COLLECTION, function (e) {
-      if (e) logger.error(e);
+      if (e) logger.error(e.toLocaleString());
     });
 
     const allOpenCollection = database.collection(MONGO_ALL_OPEN_COLLECTION);
@@ -212,7 +215,6 @@ async function updateUnassigned() {
       logger.silly(`mfiSupportCases: ${i._id}`);
     });
 
-    logger.debug("Upserting mfiSupportCases to unassigned collection.");
     const mfiSupportCasesArray = await mfiSupportCases.toArray();
     await upsertToCollection(unassignedCollection, mfiSupportCasesArray);
 
@@ -267,7 +269,7 @@ async function updateAssigned(mfiSupportCases) {
     });
 
     if (moveQueue.length > 0) {
-      logger.debug(`Detected ${moveQueue.length} newly-assigned cases. Preparing to move documents.`);
+      logger.debug(`Detected ${moveQueue.length} newly-assigned cases. Preparing to update documents.`);
 
       await updateFields(moveQueue);
       await deleteDocuments(moveQueue, unassignedCollection);
@@ -319,8 +321,10 @@ async function updateFields(moveQueue) {
         logger.error("null entry found in moveQueue. Skipping...");
         break;
       }
+      
       logger.silly("_case: " + (JSON.stringify(_case))._id);
       logger.debug("Looping through cases in moveQueue - querying for new owner for case " + _case._id + ".");
+
       /* spaghetti to account for older cases that don't have the newer urlPrintView attribute */
       if (!_case.urlPrintView) {
         _case.urlPrintView = urlPrintView = `https://microfocus.my.salesforce.com/${_case.caseID}/p`;
@@ -331,10 +335,7 @@ async function updateFields(moveQueue) {
 
       logger.debug("newFields: " + JSON.stringify(newFields));
 
-      if (!newFields.owner) {
-        logger.error("Throwing error from updateFields() A...");
-        throw new Error("newFields empty. Skipping mongo update.");
-      }
+      if (!newFields.owner) { throw new Error("newFields empty. Skipping mongo update."); }
 
       _case.caseOwner      = newFields.owner;
       _case.caseOwnerAlias = newFields.owner;
@@ -342,7 +343,7 @@ async function updateFields(moveQueue) {
       _case.subject        = newFields.subject;
     }
   } catch (e) {
-    logger.error("Throwing error from updateFields() B...");
+    logger.error("Throwing error from updateFields().");
     throw (e);
   } finally {
     await browser.close();
@@ -406,7 +407,7 @@ async function upsertToCollection(collection, docs) {
 
   logger.debug(`Matched ${result.nMatched} documents.`);
   logger.debug(`Updated ${result.nModified} documents.`);
-  logger.debug(`Updated ${result.nUpserted} documents.`);
+  logger.debug(`Upserted ${result.nUpserted} documents.`);
 }
 
 
@@ -458,22 +459,21 @@ async function deleteDocuments(docs, collection) {
 }
 
 
-/* Lists all files in specified directory */
-async function listDir(path) {
-  try {
-    return fsPromises.readdir(path);
-  } catch (e) {
-    logger.error('Error occured while reading directory!', e.toLocaleString());
-  }
-}
-
-
-/* Reads file */
 async function readFile(path) {
   try {
     return fs.readFileSync(path);
   } catch (e) {
     logger.error("Error caught in readFile: " + e.toLocaleString());
+  }t
+}
+
+
+async function deleteFile(path) {
+  try {
+    logger.debug(`Deleting file ${path}`);
+    fs.unlinkSync(path);
+  } catch (e) {
+    logger.error("Error caught in deleteFile(): " + e.toLocaleString());
   }
 }
 
