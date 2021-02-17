@@ -42,7 +42,7 @@ var initialized = false;
 casesUpdatedEmitter
   .on('open updated', async function() {
     logger.debug("Received 'open updated' event from casesUpdatedEmitter.");
-    await updateUnassigned();
+    // await updateUnassigned();
   })
   .on('closed updated', async function(closedCases) {
     logger.debug("Received 'closed updated' event from casesUpdatedEmitter.");
@@ -50,7 +50,7 @@ casesUpdatedEmitter
   })
   .on('unassigned updated', async function(mfiSupportCases) {
     logger.debug("Received 'unassigned updated' event from casesUpdatedEmitter.");
-    await updateAssigned(mfiSupportCases);
+    // await updateAssigned(mfiSupportCases);
   })
   .on('csv parsed', async function(filename) {
     logger.debug("Received 'csv parsed' event from casesUpdatedEmitter.");
