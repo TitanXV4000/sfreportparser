@@ -13,6 +13,7 @@ const jwalkerLogger = require('jwalker-logger');
 const nodemailer = require('nodemailer');
 const sf = require('./jwalker-sf');
 const emitter = require('events').EventEmitter;
+const fsPromises = fs.promises;
 const path = require('path');
 
 // TODO integrate with config.js / env variables
@@ -88,8 +89,15 @@ watcher
 
     /* Get the report tag from the beginnning of the basename to determine collection */
     const collectionName = ((path.basename(filePath)).split('_'))[0];
+    const reportFilename = path.basename(filePath);
     logger.debug(`collectionName from reportTag: ${collectionName}`);
-    
+
+    /*await copyFile(config.DOWNLOAD_PATH + '/' + reportFilename, 
+	           config.DOWNLOAD_PATH + '/' + collectionName + '/' collectionName + '_last.csv');
+		   */
+    await copyFile(`${config.DOWNLOAD_PATH}/${reportFilename}`, 
+	           `${config.DOWNLOAD_PATH}/${collectionName}/${collectionName}_last.csv`);
+
     logger.info(`Detected new file \'${filePath}\'. Begin parsing...`);
     var latestReport = await readFile(filePath);
 
@@ -545,6 +553,19 @@ async function deleteFile(path) {
     fs.unlinkSync(path);
   } catch (e) {
     logger.error("Error caught in deleteFile(): " + e.toLocaleString());
+  }
+}
+
+
+async function copyFile(oldname, newname) {
+  logger.debug(`Copying file ${oldname} to ${newname}`);
+  try {
+    await fsPromises.copyFile(oldname, newname);
+    logger.debug('File copy complete.');
+    fileCopied = true;
+  } catch (e) {
+    logger.error('Throwing error from moveFile()');
+    throw e;
   }
 }
 
