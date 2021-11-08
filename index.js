@@ -26,6 +26,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const MONGO_OPEN_COLLECTION = 'open';
+const MONGO_CLOSED_COLLECTION = 'closed';
 const MONGO_UNASSIGNED_COLLECTION = 'unassigned';
 
 var lastUpdateTime;
@@ -41,8 +42,9 @@ var initialized = false;
 
 
 casesUpdatedEmitter
-  .on('open updated', async function() {
+  .on('open updated', async function(openCases) {
     logger.debug("Received 'open updated' event from casesUpdatedEmitter.");
+    await cleanupOpenCases(openCases);
     // await updateUnassigned();
   })
   .on('closed updated', async function(closedCases) {
@@ -109,9 +111,11 @@ watcher
     logger.silly("Loaded the following data from file: " + JSON.stringify(data));
 
     var timestamp = new Date()
-      .toLocaleString('en-US', { timeZone: 'America/Denver'})
-      .replace(',', '');
-    logger.debug("logTime timestamp: " + timestamp);
+    //  .toLocaleString('en-US', { timeZone: 'America/Denver'})
+    //  .replace(',', '');
+    logger.debug("logTime timestamp: " + timestamp.toLocaleString('en-US', { timeZone: 'America/Denver'}).replace(',', ''));
+    //  .replace(',', '');
+;
 
     var cases = [];
     for (const row of data) {
@@ -488,6 +492,35 @@ async function cleanupClosedCases(closedCases) {
     const openCollection = database.collection(MONGO_OPEN_COLLECTION);
 
     await deleteDocuments(openCollection, closedCases);
+    
+  } catch (e) {
+    logger.error(e.toLocaleString());
+  } finally {
+    client.close();
+    logger.debug("Mongo connection closed.");
+  }
+}
+
+
+/* Remove open cases from 'closed' collection */
+async function cleanupOpenCases(openCases) {
+  logger.info('Cleaning up open cases from \'closed\' collection.');
+
+  /* Connect to MongoDB */
+  const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
+
+  try {
+    // Connect the client to the server
+    logger.debug("Connecting to mongo db \"" + config.MONGO_DB + "\" at url: " + config.MONGO_URI);
+    await client.connect();
+    // Establish and verify connection
+    const database = client.db(config.MONGO_DB);
+    await database.command({ ping: 1 });
+    logger.debug("Connected successfully to mongo server.");
+
+    const closedCollection = database.collection(MONGO_CLOSED_COLLECTION);
+
+    await deleteDocuments(closedCollection, openCases);
     
   } catch (e) {
     logger.error(e.toLocaleString());
