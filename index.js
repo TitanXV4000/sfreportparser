@@ -113,7 +113,7 @@ watcher
     var timestamp = new Date()
     //  .toLocaleString('en-US', { timeZone: 'America/Denver'})
     //  .replace(',', '');
-    logger.debug("logTime timestamp: " + timestamp.toLocaleString('en-US', { timeZone: 'America/Denver'}).replace(',', ''));
+    logger.debug("logTime timestamp: " + timestamp.toLocaleString('en-US', { timeZone: config.TIMEZONE}).replace(',', ''));
     //  .replace(',', '');
 ;
 
@@ -235,8 +235,8 @@ async function upsertToCollection(collection, docs) {
   const result = await collection.bulkWrite(bulkOps);
 
   //logger.info(`Matched ${result.nMatched} documents.`);
-  logger.info(`Updated ${result.nModified} documents.`);
-  logger.info(`Upserted ${result.nUpserted} documents.`);
+  logger.info(`Updated ${result.nModified} documents to ${collection.collectionName}.`);
+  logger.info(`Upserted ${result.nUpserted} documents to ${collection.collectionName}.`);
 }
 
 
@@ -263,7 +263,7 @@ async function deleteDocuments(collection, docs) {
 
     const result = await collection.bulkWrite(bulkOps);
 
-    logger.info(`Deleted ${result.nRemoved} documents.`);
+    logger.info(`Deleted ${result.nRemoved} documents from ${collection.collectionName}.`);
 
   } catch (e) {
     logger.error(`Caught error in deleteDocuments: ${e.toLocaleString()}`);
