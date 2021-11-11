@@ -532,7 +532,7 @@ async function checkLastUpdateTime() {
 
     let diff = currentTime - lastUpdateTime;
 
-    if (diff > 300000) { // five minutes
+    if (diff > 600000) { // ten minutes
       let errorMessage = "Error: it has been " + Math.floor(diff / 1000 / 60) + " minutes since receiving any updates.\nYou may need to check on the sfexporter.";
       logger.error(errorMessage);
 
