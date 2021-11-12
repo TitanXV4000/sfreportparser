@@ -166,7 +166,7 @@ watcher
 
 /* Accepts list of case objects to upload to mongo */
 async function uploadToMongo(collectionName, cases) {
-  logger.info(`Sending cases to mongo collection \'${collectionName}\'.`);
+  logger.debug(`Sending cases to mongo collection \'${collectionName}\'.`);
   /* Connect to MongoDB */
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
 
@@ -467,7 +467,7 @@ async function evaluatePage(page, url) {
 
 /* Remove closed cases from 'open' collection */
 async function cleanupClosedCases(closedCases) {
-  logger.info('Cleaning up closed cases from \'open\' collection.');
+  logger.debug('Cleaning up closed cases from \'open\' collection.');
 
   /* Connect to MongoDB */
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
