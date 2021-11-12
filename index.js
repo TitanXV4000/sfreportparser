@@ -496,7 +496,7 @@ async function cleanupClosedCases(closedCases) {
 
 /* Remove open cases from 'closed' collection */
 async function cleanupOpenCases(openCases) {
-  logger.info('Cleaning up open cases from \'closed\' collection.');
+  logger.debug('Cleaning up open cases from \'closed\' collection.');
 
   /* Connect to MongoDB */
   const client = new MongoClient(config.MONGO_URI, {useNewUrlParser: true, useUnifiedTopology: true});
