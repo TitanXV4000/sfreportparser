@@ -150,6 +150,7 @@ watcher
         "closureSummary"     : values[31],
         "closeCode"          : values[32],
         "caseLastModifiedBy" : values[33],
+        "accountCountry"     : values[34],
         "url"                : url,
         "urlPrintView"       : urlPrintView,
       });
