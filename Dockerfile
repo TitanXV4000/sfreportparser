@@ -1,4 +1,4 @@
-FROM buildkite/puppeteer:5.2.1
+FROM ghcr.io/puppeteer/puppeteer:22.15.0
 WORKDIR /usr/src/apps
 RUN apt-get update
 RUN apt-get -y install git
