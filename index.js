@@ -174,7 +174,8 @@ watcher
           "productRelation"       : values[12],
           "sfURL"                 : url,
           "portalURL"             : values[13],
-      });
+        });
+      }
     }
     logger.silly("Created case objects: " + cases);
 
