@@ -154,6 +154,8 @@ watcher
           "accountCountry"     : values[34],
           "url"                : url,
           "urlPrintView"       : urlPrintView,
+          "kbArticle"          : value[35],
+          "IdolkbLink"         : value[36],
         });
       } else if (collectionName === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
