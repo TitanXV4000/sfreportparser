@@ -154,8 +154,8 @@ watcher
           "accountCountry"     : values[34],
           "url"                : url,
           "urlPrintView"       : urlPrintView,
-          "kbArticle"          : value[35],
-          "IdolkbLink"         : value[36],
+          "kbArticle"          : values[35],
+          "IdolkbLink"         : values[36],
         });
       } else if (collectionName === "kb") {
         url = `https://microfocus.lightning.force.com/lightning/r/Knowledge__kav/${values[1]}/view`
@@ -593,7 +593,7 @@ async function readFile(path) {
     return fs.readFileSync(path);
   } catch (e) {
     logger.error("Error caught in readFile: " + e.toLocaleString());
-  }t
+  }
 }
 
 
